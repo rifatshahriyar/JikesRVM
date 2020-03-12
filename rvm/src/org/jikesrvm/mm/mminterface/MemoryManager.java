@@ -20,6 +20,7 @@ import static org.jikesrvm.objectmodel.TIBLayoutConstants.IMT_METHOD_SLOTS;
 import static org.jikesrvm.runtime.ExitStatus.EXIT_STATUS_BOGUS_COMMAND_LINE_ARG;
 import static org.mmtk.utility.Constants.MIN_ALIGNMENT;
 import static org.mmtk.utility.heap.layout.HeapParameters.MAX_SPACES;
+import static org.jikesrvm.mm.mminterface.Barriers.NEEDS_OBJECT_PUTFIELD_BARRIER;
 
 import java.lang.ref.PhantomReference;
 import java.lang.ref.SoftReference;
@@ -1025,7 +1026,15 @@ public final class MemoryManager {
    */
   @Interruptible
   public static void addSoftReference(SoftReference<?> obj, Object referent) {
-    ReferenceProcessor.addSoftCandidate(obj,ObjectReference.fromObject(referent));
+    if (RVMType.JavaLangRefReferenceReferenceField.madeTraced()) {
+        if (NEEDS_OBJECT_PUTFIELD_BARRIER) {
+          Barriers.objectFieldWrite(obj, referent, RVMType.JavaLangRefReferenceReferenceField.getOffset(), RVMType.JavaLangRefReferenceReferenceField.getId());
+        } else {
+          Magic.setObjectAtOffset(obj, RVMType.JavaLangRefReferenceReferenceField.getOffset(), referent, RVMType.JavaLangRefReferenceReferenceField.getId());
+        }
+      } else {
+        ReferenceProcessor.addSoftCandidate(obj,ObjectReference.fromObject(referent));
+      }
   }
 
   /**
@@ -1036,7 +1045,15 @@ public final class MemoryManager {
    */
   @Interruptible
   public static void addWeakReference(WeakReference<?> obj, Object referent) {
-    ReferenceProcessor.addWeakCandidate(obj,ObjectReference.fromObject(referent));
+    if (RVMType.JavaLangRefReferenceReferenceField.madeTraced()) {
+        if (NEEDS_OBJECT_PUTFIELD_BARRIER) {
+          Barriers.objectFieldWrite(obj, referent, RVMType.JavaLangRefReferenceReferenceField.getOffset(), RVMType.JavaLangRefReferenceReferenceField.getId());
+        } else {
+          Magic.setObjectAtOffset(obj, RVMType.JavaLangRefReferenceReferenceField.getOffset(), referent, RVMType.JavaLangRefReferenceReferenceField.getId());
+        }
+      } else {
+        ReferenceProcessor.addWeakCandidate(obj,ObjectReference.fromObject(referent));
+      }
   }
 
   /**
@@ -1047,7 +1064,15 @@ public final class MemoryManager {
    */
   @Interruptible
   public static void addPhantomReference(PhantomReference<?> obj, Object referent) {
-    ReferenceProcessor.addPhantomCandidate(obj,ObjectReference.fromObject(referent));
+    if (RVMType.JavaLangRefReferenceReferenceField.madeTraced()) {
+        if (NEEDS_OBJECT_PUTFIELD_BARRIER) {
+          Barriers.objectFieldWrite(obj, referent, RVMType.JavaLangRefReferenceReferenceField.getOffset(), RVMType.JavaLangRefReferenceReferenceField.getId());
+        } else {
+          Magic.setObjectAtOffset(obj, RVMType.JavaLangRefReferenceReferenceField.getOffset(), referent, RVMType.JavaLangRefReferenceReferenceField.getId());
+        }
+      } else {
+        ReferenceProcessor.addPhantomCandidate(obj,ObjectReference.fromObject(referent));
+      }
   }
 
   /***********************************************************************
