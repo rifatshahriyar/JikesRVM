@@ -14,7 +14,6 @@ package org.mmtk.plan.refcountnwb;
 
 import static org.mmtk.policy.SegregatedFreeListSpace.MAX_FREELIST_OBJECT_BYTES;
 import org.mmtk.plan.StopTheWorldConstraints;
-
 import org.vmmagic.pragma.*;
 
 /**
@@ -35,4 +34,6 @@ public class RCBaseConstraints extends StopTheWorldConstraints {
   public int maxNonLOSDefaultAllocBytes() { return MAX_FREELIST_OBJECT_BYTES; }
   @Override
   public boolean objectReferenceBulkCopySupported() { return true; }
+  @Override
+  public boolean needsConcurrentWorkers() { return true; }
 }

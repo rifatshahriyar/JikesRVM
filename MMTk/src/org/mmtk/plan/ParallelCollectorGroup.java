@@ -163,6 +163,7 @@ public class ParallelCollectorGroup {
    * @return {@code true} if the context is a member.
    */
   public boolean isMember(CollectorContext context) {
+	if (contexts == null) return false;
     for (CollectorContext c: contexts) {
       if (c == context) {
         return true;

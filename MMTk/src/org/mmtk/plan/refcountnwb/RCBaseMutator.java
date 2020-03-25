@@ -15,7 +15,6 @@ package org.mmtk.plan.refcountnwb;
 import static org.mmtk.utility.Constants.BYTES_IN_ADDRESS;
 
 import org.mmtk.plan.StopTheWorldMutator;
-import org.mmtk.plan.refcountnwb.RCBase;
 import org.mmtk.plan.refcountnwb.backuptrace.BTSweepImmortalScanner;
 import org.mmtk.policy.ExplicitFreeListLocal;
 import org.mmtk.policy.ExplicitFreeListSpace;
@@ -41,8 +40,10 @@ public class RCBaseMutator extends StopTheWorldMutator {
 	private final ExplicitFreeListLocal rc;
 	private final LargeObjectLocal rclos;
 	private final ObjectReferenceDeque modBuffer;
-	private final RCDecBuffer decBuffer;
 	private final BTSweepImmortalScanner btSweepImmortal;
+	private final RCDecBuffer decBuffer0;
+	private final RCDecBuffer decBuffer1;
+	private RCDecBuffer decBuffer;
 
 	/************************************************************************
 	 *
@@ -56,8 +57,10 @@ public class RCBaseMutator extends StopTheWorldMutator {
 		rc = new ExplicitFreeListLocal(RCBase.rcSpace);
 		rclos = new LargeObjectLocal(RCBase.rcloSpace);
 		modBuffer = new ObjectReferenceDeque("mod", global().modPool);
-		decBuffer = new RCDecBuffer(global().decPool);
 		btSweepImmortal = new BTSweepImmortalScanner();
+		decBuffer0 = new RCDecBuffer(global().decPool0);
+		decBuffer1 = new RCDecBuffer(global().decPool1);
+		decBuffer = global().currentDecPool == 0 ? decBuffer0 : decBuffer1;
 	}
 
 	/****************************************************************************
@@ -170,7 +173,8 @@ public class RCBaseMutator extends StopTheWorldMutator {
 		}
 
 		if (phaseId == RCBase.PROCESS_DECBUFFER) {
-			decBuffer.flushLocal();
+			decBuffer0.flushLocal();
+		    decBuffer1.flushLocal();
 			return;
 		}
 
@@ -181,10 +185,13 @@ public class RCBaseMutator extends StopTheWorldMutator {
 			rc.release();
 			if (VM.VERIFY_ASSERTIONS)
 				VM.assertions._assert(modBuffer.isEmpty());
-			if (VM.VERIFY_ASSERTIONS)
-				VM.assertions._assert(decBuffer.isEmpty());
 			return;
 		}
+
+	    if(phaseId == RCBase.SWITCH_DECPOOL){
+	      decBuffer = global().currentDecPool == 0 ? decBuffer0 : decBuffer1;
+	      return;
+	    }
 
 		super.collectionPhase(phaseId, primary);
 	}
@@ -193,7 +200,8 @@ public class RCBaseMutator extends StopTheWorldMutator {
 	 * Flush per-mutator remembered sets into the global remset pool.
 	 */
 	public final void flushRememberedSets() {
-		decBuffer.flushLocal();
+		decBuffer0.flushLocal();
+	    decBuffer1.flushLocal();
 		modBuffer.flushLocal();
 		assertRemsetsFlushed();
 	}
@@ -206,7 +214,8 @@ public class RCBaseMutator extends StopTheWorldMutator {
 	 */
 	public final void assertRemsetsFlushed() {
 		if (VM.VERIFY_ASSERTIONS) {
-			VM.assertions._assert(decBuffer.isFlushed());
+			VM.assertions._assert(decBuffer0.isFlushed());
+		    VM.assertions._assert(decBuffer1.isFlushed());
 			VM.assertions._assert(modBuffer.isFlushed());
 		}
 	}

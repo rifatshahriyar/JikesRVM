@@ -13,14 +13,17 @@
 package org.mmtk.plan.refcountnwb;
 
 import org.mmtk.plan.Phase;
+import org.mmtk.plan.Plan;
 import org.mmtk.plan.StopTheWorldCollector;
 import org.mmtk.plan.TraceLocal;
 import org.mmtk.plan.refcountnwb.backuptrace.BTTraceLocal;
 import org.mmtk.policy.Space;
+import org.mmtk.utility.Log;
 import org.mmtk.utility.deque.ObjectReferenceDeque;
 import org.mmtk.vm.VM;
 import org.vmmagic.pragma.Inline;
 import org.vmmagic.pragma.Uninterruptible;
+import org.vmmagic.pragma.Unpreemptible;
 import org.vmmagic.unboxed.ObjectReference;
 
 /**
@@ -37,8 +40,11 @@ public abstract class RCBaseCollector extends StopTheWorldCollector {
   private final BTTraceLocal backupTrace;
   private final ObjectReferenceDeque modBuffer;
   private final ObjectReferenceDeque oldRootBuffer;
-  private final RCDecBuffer decBuffer;
   private final RCZero zero;
+  private final RCDecBuffer decBuffer0;
+  private final RCDecBuffer decBuffer1;
+  private RCDecBuffer decBuffer;
+  private static volatile boolean performCycleCollection = false;
 
   /**
    * Constructor.
@@ -47,9 +53,10 @@ public abstract class RCBaseCollector extends StopTheWorldCollector {
     newRootBuffer = new ObjectReferenceDeque("new-root", global().newRootPool);
     oldRootBuffer = new ObjectReferenceDeque("old-root", global().oldRootPool);
     modBuffer = new ObjectReferenceDeque("mod buf", global().modPool);
-    decBuffer = new RCDecBuffer(global().decPool);
     backupTrace = new BTTraceLocal(global().backupTrace);
     zero = new RCZero();
+    decBuffer0 = new RCDecBuffer(global().decPool0);
+	decBuffer1 = new RCDecBuffer(global().decPool1);
   }
   
   /**
@@ -77,6 +84,8 @@ public abstract class RCBaseCollector extends StopTheWorldCollector {
     if (phaseId == RCBase.PREPARE) {
       getRootTrace().prepare();
       if (RCBase.CC_BACKUP_TRACE && RCBase.performCycleCollection) backupTrace.prepare();
+      decBuffer = global().currentDecPool == 0 ? decBuffer0 : decBuffer1;
+      performCycleCollection = RCBase.performCycleCollection;
       return;
     }
 
@@ -125,18 +134,12 @@ public abstract class RCBaseCollector extends StopTheWorldCollector {
     }
 
     if (phaseId == RCBase.PROCESS_DECBUFFER) {
-      ObjectReference current;
-      while(!(current = decBuffer.pop()).isNull()) {
-        if (RCHeader.decRC(current) == RCHeader.DEC_KILL) {
-          decBuffer.processChildren(current);
-          if (Space.isInSpace(RCBase.REF_COUNT, current)) {
-            RCBase.rcSpace.free(current);
-          } else if (Space.isInSpace(RCBase.REF_COUNT_LOS, current)) {
-            RCBase.rcloSpace.free(current);
-          } else if (Space.isInSpace(RCBase.IMMORTAL, current)) {
-            VM.scanning.scanObject(zero, current);
-          }
-        }
+      if (performCycleCollection) {
+          processDecBuf(decBuffer0);
+          processDecBuf(decBuffer1);
+      } else {
+          decBuffer0.flushLocal();
+          decBuffer1.flushLocal();
       }
       return;
     }
@@ -149,10 +152,16 @@ public abstract class RCBaseCollector extends StopTheWorldCollector {
       if (VM.VERIFY_ASSERTIONS) {
         VM.assertions._assert(newRootBuffer.isEmpty());
         VM.assertions._assert(modBuffer.isEmpty());
-        VM.assertions._assert(decBuffer.isEmpty());
       }
       return;
     }
+
+    if (phaseId == RCBase.CONCURRENT_PREEMPT) {
+		if (!performCycleCollection) {
+			processDecBuf(decBuffer);
+		}
+		return;
+	}
 
     super.collectionPhase(phaseId, primary);
   }
@@ -171,5 +180,60 @@ public abstract class RCBaseCollector extends StopTheWorldCollector {
   /** @return The current trace instance. */
   public final TraceLocal getCurrentTrace() {
     return getRootTrace();
+  }
+
+  @Override
+  @Unpreemptible
+  public void run() {
+	  while (true) {
+		  park();
+		  if (Plan.concurrentWorkers.isMember(this)) {
+			  concurrentCollect();
+		  } else {
+			  collect();
+		  }
+	  }
+  }
+
+  @Unpreemptible
+  public void concurrentCollect() {
+	if (VM.VERIFY_ASSERTIONS) VM.assertions._assert(!Plan.gcInProgress());
+	short phaseId = Phase.getConcurrentPhaseId();
+	concurrentCollectionPhase(phaseId);
+  }
+
+  @Unpreemptible
+  public void concurrentCollectionPhase(short phaseId) {
+	if (phaseId == RCBase.CONCURRENT) {
+		if (VM.VERIFY_ASSERTIONS) {
+			VM.assertions._assert(!Plan.gcInProgress());
+		}
+		if (!performCycleCollection) {
+			decBuffer = global().currentDecPool == 0 ? decBuffer1 : decBuffer0;
+			processDecBuf(decBuffer);
+		}
+		rendezvous();
+		return;
+	}
+	Log.write("Concurrent phase ");
+	Log.write(Phase.getName(phaseId));
+	Log.writeln(" not handled.");
+	VM.assertions.fail("Concurrent phase not handled!");
+  }
+
+  private void processDecBuf(RCDecBuffer decBuffer) {
+	  ObjectReference current;
+	  while (!(current = decBuffer.pop()).isNull()) {
+		  if (RCHeader.decRC(current) == RCHeader.DEC_KILL) {
+			  decBuffer.processChildren(current);
+			  if (Space.isInSpace(RCBase.REF_COUNT, current)) {
+				  RCBase.rcSpace.free(current);
+			  } else if (Space.isInSpace(RCBase.REF_COUNT_LOS, current)) {
+				  RCBase.rcloSpace.free(current);
+			  } else if (Space.isInSpace(RCBase.IMMORTAL, current)) {
+				  VM.scanning.scanObject(zero, current);
+			  }
+		  }
+	  }
   }
 }

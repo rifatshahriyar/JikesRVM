@@ -85,6 +85,11 @@ public class RCBase extends StopTheWorld {
       Phase.scheduleGlobal     (CLOSURE),
       Phase.scheduleCollector  (CLOSURE));
 
+  public static final short SWITCH_DECPOOL = Phase.createSimple("switch-dec");
+  public static final short CONCURRENT_PREPARE = Phase.createSimple("conc-prepare");
+  public static final short CONCURRENT_PREEMPT = Phase.createSimple("conc-preempt");
+  public static final short CONCURRENT = Phase.createConcurrent("conc", Phase.scheduleCollector(CONCURRENT_PREEMPT));
+
   /**
    * This is the phase that is executed to perform a collection.
    */
@@ -93,7 +98,11 @@ public class RCBase extends StopTheWorld {
       Phase.scheduleComplex(rootClosurePhase),
       Phase.scheduleComplex(refcountoldCollectionPhase),
       Phase.scheduleComplex(completeClosurePhase),
-      Phase.scheduleComplex(finishPhase));
+      Phase.scheduleGlobal(SWITCH_DECPOOL),
+      Phase.scheduleMutator(SWITCH_DECPOOL),
+      Phase.scheduleComplex(finishPhase),
+      Phase.scheduleGlobal(CONCURRENT_PREPARE),
+      Phase.scheduleConcurrent(CONCURRENT));
 
   // CHECKSTYLE:ON
 
@@ -108,10 +117,12 @@ public class RCBase extends StopTheWorld {
   public static final int REF_COUNT_LOS = rcloSpace.getDescriptor();
 
   public final SharedDeque modPool = new SharedDeque("mod", metaDataSpace, 1);
-  public final SharedDeque decPool = new SharedDeque("dec", metaDataSpace, 1);
   public final SharedDeque newRootPool = new SharedDeque("newRoot", metaDataSpace, 1);
   public final SharedDeque oldRootPool = new SharedDeque("oldRoot", metaDataSpace, 1);
   
+  public final SharedDeque decPool0 = new SharedDeque("dec0", metaDataSpace, 1);
+  public final SharedDeque decPool1 = new SharedDeque("dec1", metaDataSpace, 1);
+  public volatile int currentDecPool;
   /*****************************************************************************
    *
    * Instance fields
@@ -135,6 +146,7 @@ public class RCBase extends StopTheWorld {
     rcSweeper = new BTSweeper();
     loScanSweeper = new BTScanLargeObjectSweeper();
     loFreeSweeper = new BTFreeLargeObjectSweeper();
+    currentDecPool = 0;
   }
 
   /**
@@ -231,7 +243,19 @@ public class RCBase extends StopTheWorld {
     }
 
     if (phaseId == PROCESS_DECBUFFER) {
-      decPool.prepare();
+      decPool0.prepare();
+      decPool1.prepare();
+      return;
+    }
+
+    if(phaseId == SWITCH_DECPOOL){
+      currentDecPool = 1-currentDecPool;
+      return;
+    }
+
+    if (phaseId == CONCURRENT_PREPARE) {
+      decPool0.prepare();
+      decPool1.prepare();
       return;
     }
 
@@ -301,5 +325,10 @@ public class RCBase extends StopTheWorld {
   @Interruptible
   protected void registerSpecializedMethods() {
     super.registerSpecializedMethods();
+  }
+
+  @Override
+  protected boolean concurrentCollectionRequired() {
+    return !Phase.concurrentPhaseActive();
   }
 }
